@@ -1,0 +1,187 @@
+"""
+Configurazione LUXiA
+====================
+
+File di configurazione centrale per personalizzare il comportamento dell'app.
+Modifica i parametri qui per personalizzare il tuo ambiente.
+"""
+
+# ============================================================================
+# CONFIGURAZIONE INTERFACCIA
+# ============================================================================
+
+# Dimensioni massime immagine per display
+MAX_IMAGE_WIDTH = 900  # pixel
+MAX_IMAGE_HEIGHT = 700  # pixel
+
+# Colori per visualizzazione aree
+AREA_COLORS = [
+    (255, 0, 0),      # Rosso
+    (0, 255, 0),      # Verde
+    (0, 0, 255),      # Blu
+    (255, 255, 0),    # Giallo
+    (255, 0, 255),    # Magenta
+    (0, 255, 255),    # Ciano
+    (255, 128, 0),    # Arancione
+    (128, 0, 255),    # Viola
+]
+
+# ============================================================================
+# CONFIGURAZIONE CALCOLI ILLUMINOTECNICI
+# ============================================================================
+
+# Fattore di sovrapposizione fascio
+# 0.5 = 50% sovrapposizione (molta uniformità, più lampade)
+# 0.7 = 30% sovrapposizione (bilanciato)
+# 0.9 = 10% sovrapposizione (poche lampade, meno uniformità)
+BEAM_OVERLAP_FACTOR = 0.7
+
+# Valori di default per altezza montaggio (m)
+DEFAULT_MOUNTING_HEIGHT = 3.0  # salotto standard
+
+# Valori di default per altezza piano calcolo (m)
+DEFAULT_CALC_PLANE_HEIGHT = 0.85  # piano di lavoro standard
+
+# Valori di default per angolo fascio (gradi)
+DEFAULT_BEAM_ANGLE = 25  # fascio medio
+
+# Range angoli supportati
+MIN_BEAM_ANGLE = 1
+MAX_BEAM_ANGLE = 90
+
+# ============================================================================
+# CONFIGURAZIONE FILE E CARTELLE
+# ============================================================================
+
+# Cartella per output (PDF e DWG)
+OUTPUT_FOLDER = "outputs"
+
+# Nomi file temporanei
+TEMP_BLUEPRINT_PREFIX = "blueprint_"
+TEMP_LDT_PREFIX = "photometry_"
+
+# ============================================================================
+# CONFIGURAZIONE PDF
+# ============================================================================
+
+# Lingua di default per report PDF
+DEFAULT_LANGUAGE = "it"  # "it" o "en"
+
+# Margini PDF (mm)
+PDF_MARGIN_TOP = 10
+PDF_MARGIN_BOTTOM = 10
+PDF_MARGIN_LEFT = 10
+PDF_MARGIN_RIGHT = 10
+
+# Altezza font (pt)
+PDF_TITLE_FONTSIZE = 16
+PDF_HEADING_FONTSIZE = 12
+PDF_NORMAL_FONTSIZE = 10
+PDF_SMALL_FONTSIZE = 8
+
+# ============================================================================
+# CONFIGURAZIONE DWG
+# ============================================================================
+
+# Scala di disegno nel DWG (1 m di realtà = quante unità nel disegno)
+DWG_SCALE = 1.0
+
+# Raggio rappresentazione lampada nel DWG (unità DWG)
+DWG_LAMP_RADIUS = 0.1
+
+# Spessore linee nel DWG (mm)
+DWG_LINE_WIDTH = 0.35
+
+# ============================================================================
+# CONFIGURAZIONE LDT PARSER
+# ============================================================================
+
+# Range plausibile flusso luminoso (lumen)
+LDT_MIN_FLUX = 100
+LDT_MAX_FLUX = 100000
+
+# Numero massimo di intensità da estrarre da LDT
+LDT_MAX_INTENSITIES = 200
+
+# ============================================================================
+# LIMITI VALIDAZIONE DATI
+# ============================================================================
+
+# Altezza montaggio (m)
+MIN_HEIGHT = 0.5
+MAX_HEIGHT = 20.0
+
+# Altezza piano calcolo (m)
+MIN_CALC_HEIGHT = 0.0
+MAX_CALC_HEIGHT = 5.0
+
+# Superficie area (m²)
+MIN_AREA = 1.0
+MAX_AREA = 10000.0
+
+# ============================================================================
+# CONFIGURAZIONE SVILUPPO
+# ============================================================================
+
+# Modalità debug
+DEBUG_MODE = False
+
+# Versione app
+APP_VERSION = "1.0"
+
+# Data creazione
+BUILD_DATE = "2026-01-09"
+
+# ============================================================================
+# TESTI PERSONALIZZATI
+# ============================================================================
+
+# Footer report PDF
+PDF_FOOTER_IT = "LUXiA v1.0 - Progettazione Illuminotecnica | Dati preliminari - Verificare sempre con calcoli professionali"
+PDF_FOOTER_EN = "LUXiA v1.0 - Lighting Design | Preliminary data - Always verify with professional calculations"
+
+# Note tecniche nel report
+PDF_NOTES_IT = (
+    "- Calcoli semplificati per il design preliminare\n"
+    "- Verificare sempre con misurazioni in situ\n"
+    "- Considerare fattori di degrado e riflessioni ambientali\n"
+    "- Conforme a metodologia UNI EN 12464-1 (semplificata)\n"
+    "- File generato da LUXiA v1.0"
+)
+
+PDF_NOTES_EN = (
+    "- Simplified calculations for preliminary design\n"
+    "- Always verify with site measurements\n"
+    "- Consider aging factors and environmental reflections\n"
+    "- Based on UNI EN 12464-1 methodology (simplified)\n"
+    "- Generated by LUXiA v1.0"
+)
+
+# ============================================================================
+# FUNZIONI DI UTILITÀ
+# ============================================================================
+
+def get_color_for_area(area_index):
+    """Restituisce colore per l'area dato l'indice"""
+    return AREA_COLORS[area_index % len(AREA_COLORS)]
+
+def get_default_area_name(index):
+    """Genera nome default per area data l'indice"""
+    names = ["Zona 1", "Zona 2", "Zona 3", "Zona 4", "Zona 5"]
+    return names[index % len(names)] if index < len(names) else f"Zona {index+1}"
+
+def validate_height(h, h_type="mounting"):
+    """Valida altezza"""
+    if h_type == "mounting":
+        return MIN_HEIGHT <= h <= MAX_HEIGHT
+    elif h_type == "calc_plane":
+        return MIN_CALC_HEIGHT <= h <= MAX_CALC_HEIGHT
+    return False
+
+def validate_area(area):
+    """Valida superficie area"""
+    return MIN_AREA <= area <= MAX_AREA
+
+def validate_angle(angle):
+    """Valida angolo fascio"""
+    return MIN_BEAM_ANGLE <= angle <= MAX_BEAM_ANGLE

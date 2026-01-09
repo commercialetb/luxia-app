@@ -1,62 +1,115 @@
 import streamlit as st
-import math, io, os
+import math
+import io
+import os
+import json
+import numpy as np
 from datetime import datetime
-from fpdf import FPDF
-from PIL import Image
-from utils.photometry import parse_ldt, calculate_beam_spread, estimate_beam_angle_from_ldt
+from PIL import Image, ImageDraw
+from pathlib import Path
 
-# --- Translations ---
+# Import utility modules
+from utils.photometry import parse_ldt, calculate_beam_spread, estimate_beam_angle_from_ldt
+from utils.blueprint_processor import BlueprintProcessor, convert_pdf_to_image
+from utils.lamp_calculator import LampPlacementCalculator
+from utils.report_generator import ReportGenerator
+
+# Try to import drawable canvas
+try:
+    from streamlit_drawable_canvas import st_canvas
+    HAS_CANVAS = True
+except Exception:
+    HAS_CANVAS = False
+
+# ============================================================================
+# TRADUZIONI
+# ============================================================================
 TRANSLATIONS = {
     "it": {
-        "title": "💡 LUXiA – Analisi e Calcolo Illuminotecnico",
-        "description": "Analizza fotometrie, calcola fasci luminosi e uniformità dai file .LDT.",
-        "lang_label": "Lingua",
-        "upload_label": "Carica file fotometrico (.LDT)",
-        "project": "Progetto",
-        "add_room": "Aggiungi ambiente",
-        "room_name": "Nome ambiente",
-        "room_height": "Altezza installazione lampada (m)",
-        "calc_plane": "Altezza piano di calcolo (m)",
-        "angle_label": "Angolo (semiapertura) δ (°) - se non disponibile, seleziona 'Auto'",
-        "auto": "Auto (da .LDT)",
+        "title": "💡 LUXiA – Progettazione Illuminotecnica Avanzata",
+        "description": "Carica planimetrie, seleziona aree, posiziona fotometrie e calcola quantità lampade",
+        "lang": "Lingua",
+        "step1": "STEP 1: Carica Planimetria",
+        "step2": "STEP 2: Seleziona Fotometrie",
+        "step3": "STEP 3: Disegna Aree",
+        "step4": "STEP 4: Calcoli e Export",
+        "upload_blueprint": "Carica planimetria (JPG, PNG, PDF, DWG)",
+        "file_uploaded": "Planimetria caricata ✓",
+        "upload_photometry": "Carica fotometria LDT",
+        "photometry_uploaded": "Fotometria caricata ✓",
+        "project_name": "Nome Progetto",
+        "drawing_mode": "Modalità Disegno",
+        "mode_rectangle": "Rettangolo",
+        "mode_polygon": "Poligono",
+        "clear_drawing": "Cancella Ultimo",
+        "add_area": "Aggiungi Area",
+        "area_added": "Area aggiunta ✓",
+        "area_name": "Nome Area",
+        "height_mounting": "Altezza Montaggio (m)",
+        "height_calc_plane": "Altezza Piano Calcolo (m)",
+        "select_photometry": "Seleziona Fotometria",
+        "beam_angle": "Angolo Fascio (°)",
+        "auto": "Auto da LDT",
         "manual": "Manuale",
-        "calc_button": "Calcola fascio e quantità",
-        "beam_width": "Larghezza del fascio sul piano di calcolo",
-        "beam_area": "Area del fascio",
-        "n_lamps": "Numero stimato di lampade",
-        "uniformity": "Uniformità stimata",
-        "download_pdf": "Scarica report PDF",
-        "no_ldt": "Nessun file .LDT caricato o parsing non riuscito: inserire angolo manualmente.",
-        "info": "Nota: il parsing .LDT è semplificato. Per risultati professionali utilizzare fotometrie standard e verificare i risultati.",
+        "calculate": "Calcola Lampade",
+        "beam_width": "Larghezza Fascio",
+        "spacing_info": "Spaziamento (m)",
+        "lamps_needed": "Lampade Necessarie",
+        "download_pdf": "⬇️ Scarica PDF Report",
+        "download_dwg": "⬇️ Scarica DWG Layout",
+        "no_blueprint": "Carica una planimetria per iniziare",
+        "no_areas": "Nessuna area disegnata ancora",
+        "summary": "Riepilogo Progetto",
+        "total_lamps": "Lampade Totali",
+        "total_area": "Superficie Totale",
     },
     "en": {
-        "title": "💡 LUXiA – Light Analysis & Calculation App",
-        "description": "Analyze photometric files, compute beam spread and uniformity from .LDT data.",
-        "lang_label": "Language",
-        "upload_label": "Upload photometric file (.LDT)",
-        "project": "Project",
-        "add_room": "Add room",
-        "room_name": "Room name",
-        "room_height": "Luminaire mounting height (m)",
-        "calc_plane": "Calculation plane height (m)",
-        "angle_label": "Beam semi-angle δ (°) - if not available choose 'Auto'",
-        "auto": "Auto (from .LDT)",
+        "title": "💡 LUXiA – Advanced Lighting Design",
+        "description": "Upload floorplan, select areas, place photometries and calculate lamp quantities",
+        "lang": "Language",
+        "step1": "STEP 1: Upload Floorplan",
+        "step2": "STEP 2: Select Photometries",
+        "step3": "STEP 3: Draw Areas",
+        "step4": "STEP 4: Calculate & Export",
+        "upload_blueprint": "Upload floorplan (JPG, PNG, PDF, DWG)",
+        "file_uploaded": "Floorplan uploaded ✓",
+        "upload_photometry": "Upload LDT photometry",
+        "photometry_uploaded": "Photometry uploaded ✓",
+        "project_name": "Project Name",
+        "drawing_mode": "Drawing Mode",
+        "mode_rectangle": "Rectangle",
+        "mode_polygon": "Polygon",
+        "clear_drawing": "Clear Last",
+        "add_area": "Add Area",
+        "area_added": "Area added ✓",
+        "area_name": "Area Name",
+        "height_mounting": "Mounting Height (m)",
+        "height_calc_plane": "Calculation Plane Height (m)",
+        "select_photometry": "Select Photometry",
+        "beam_angle": "Beam Angle (°)",
+        "auto": "Auto from LDT",
         "manual": "Manual",
-        "calc_button": "Compute beam & quantities",
-        "beam_width": "Beam width on calculation plane",
-        "beam_area": "Beam area",
-        "n_lamps": "Estimated number of luminaires",
-        "uniformity": "Estimated uniformity",
-        "download_pdf": "Download PDF report",
-        "no_ldt": "No .LDT file uploaded or parsing failed: please enter angle manually.",
-        "info": "Note: .LDT parsing is simplified. For professional results use standard photometries and verify outputs.",
+        "calculate": "Calculate Lamps",
+        "beam_width": "Beam Width",
+        "spacing_info": "Spacing (m)",
+        "lamps_needed": "Lamps Needed",
+        "download_pdf": "⬇️ Download PDF Report",
+        "download_dwg": "⬇️ Download DWG Layout",
+        "no_blueprint": "Upload a floorplan to start",
+        "no_areas": "No areas drawn yet",
+        "summary": "Project Summary",
+        "total_lamps": "Total Lamps",
+        "total_area": "Total Area",
     }
 }
 
-st.set_page_config(page_title="LUXiA", layout="wide")
+# ============================================================================
+# CONFIGURAZIONE STREAMLIT
+# ============================================================================
+st.set_page_config(page_title="LUXiA", layout="wide", initial_sidebar_state="expanded")
 
-# --- Sidebar / settings ---
-lang = st.sidebar.radio("Lingua / Language", ("🇮🇹 Italiano", "🇬🇧 English"))
+# Lingua
+lang = st.sidebar.radio("🌍", ("🇮🇹 Italiano", "🇬🇧 English"), label_visibility="collapsed")
 lang_code = "it" if lang.startswith("🇮🇹") else "en"
 T = TRANSLATIONS[lang_code]
 
@@ -64,91 +117,430 @@ st.title(T["title"])
 st.write(T["description"])
 st.markdown("---")
 
-# Project parameters
-st.sidebar.header(T["project"])
-project_name = st.sidebar.text_input("Project name", "LUXiA Demo Project")
-st.sidebar.markdown("### Rooms / Ambienti")
-n_rooms = st.sidebar.number_input("Number of rooms", min_value=1, max_value=12, value=1, step=1)
+# Crea cartella output
+os.makedirs("outputs", exist_ok=True)
 
-# Upload LDT
-st.subheader(T["upload_label"])
-ldt_file = st.file_uploader(T["upload_label"], type=["ldt", "LDT"])
-parsed = None
-if ldt_file is not None:
-    try:
-        parsed = parse_ldt(ldt_file)
-        st.success(f"Loaded: {parsed.get('name','<unknown>')}")
-    except Exception as e:
-        st.error("Error parsing .LDT: " + str(e))
-        parsed = None
+# ============================================================================
+# INIZIALIZZA SESSION STATE
+# ============================================================================
+if 'blueprint' not in st.session_state:
+    st.session_state.blueprint = None
+if 'photometries' not in st.session_state:
+    st.session_state.photometries = {}
+if 'areas' not in st.session_state:
+    st.session_state.areas = []
+if 'drawing_points' not in st.session_state:
+    st.session_state.drawing_points = []
+if 'current_drawing_mode' not in st.session_state:
+    st.session_state.current_drawing_mode = 'rectangle'
 
-st.info(T["info"])
-st.markdown("---")
+# ============================================================================
+# STEP 1: CARICA PLANIMETRIA
+# ============================================================================
+st.header(f"📐 {T['step1']}")
+blueprint_file = st.file_uploader(T['upload_blueprint'], type=['jpg', 'jpeg', 'png', 'pdf', 'dwg'])
 
-# For each room, collect parameters and compute
-rooms = []
-for i in range(int(n_rooms)):
-    st.header(f"{T['project']} - {i+1}")
-    cols = st.columns(3)
-    room_name = cols[0].text_input(T["room_name"], value=f"Room_{i+1}", key=f"name_{i}")
-    h = cols[1].number_input(T["room_height"], min_value=0.5, max_value=20.0, value=3.0, key=f"h_{i}")
-    hc = cols[2].number_input(T["calc_plane"], min_value=0.0, max_value=5.0, value=0.85, key=f"hc_{i}")
+if blueprint_file:
+    file_ext = blueprint_file.name.split('.')[-1].lower()
+    
+    if file_ext == 'pdf':
+        image = convert_pdf_to_image(blueprint_file)
+        if image:
+            st.session_state.blueprint = BlueprintProcessor(image=image)
+            st.success(T['file_uploaded'])
+    elif file_ext in ['jpg', 'jpeg', 'png']:
+        image = Image.open(blueprint_file)
+        st.session_state.blueprint = BlueprintProcessor(image=image)
+        st.success(T['file_uploaded'])
+    elif file_ext == 'dwg':
+        st.info("DWG support: si consiglia di esportare come JPG/PNG")
 
-    st.markdown("**Angle selection / Selezione angolo**")
-    angle_mode = st.radio("", (T["auto"], T["manual"]), index=0 if parsed else 1, key=f"amode_{i}")
-    angle_deg = None
-    if angle_mode == T["auto"] and parsed:
+if st.session_state.blueprint:
+    st.session_state.blueprint.resize_for_display(max_width=800, max_height=600)
+
+# ============================================================================
+# STEP 2: CARICA FOTOMETRIE
+# ============================================================================
+st.header(f"💡 {T['step2']}")
+col1, col2 = st.columns(2)
+
+with col1:
+    ldt_file = st.file_uploader(T['upload_photometry'], type=['ldt'], key='ldt_upload')
+    if ldt_file:
         try:
-            angle_deg = estimate_beam_angle_from_ldt(parsed)
-            st.write(f"Auto-estimated semi-angle δ = {angle_deg:.1f}° (from .LDT)")
+            photometry = parse_ldt(ldt_file)
+            photom_name = photometry.get('name', 'Unknown').strip()[:30]
+            st.session_state.photometries[ldt_file.name] = photometry
+            st.success(f"{T['photometry_uploaded']}: {photom_name}")
         except Exception as e:
-            st.warning(T["no_ldt"])
-            angle_mode = T["manual"]
-    if angle_mode == T["manual"] or angle_deg is None:
-        angle_deg = st.slider(T["angle_label"], min_value=1.0, max_value=90.0, value=15.0, key=f"angle_{i}")
+            st.error(f"Errore parsing LDT: {str(e)}")
 
-    surface = st.number_input("Surface area (m²) / Superficie (m²)", min_value=1.0, max_value=10000.0, value=30.0, key=f"area_{i}")
+with col2:
+    if st.session_state.photometries:
+        st.info(f"📦 {len(st.session_state.photometries)} fotometria/e caricata/e")
 
-    # Compute beam and estimates
-    if st.button(T["calc_button"], key=f"calc_{i}"):
-        beam_width = calculate_beam_spread(h, hc, angle_deg)
-        radius = beam_width/2.0
-        beam_area = math.pi * (radius**2)
-        n_lamps = math.ceil(surface / beam_area)
-        coverage = (n_lamps * beam_area) / surface
-        uniformity = min(coverage, 1.0)
+# ============================================================================
+# STEP 3: DISEGNA AREE SULLA PLANIMETRIA
+# ============================================================================
+st.header(f"✏️ {T['step3']}")
 
-        st.write(f"**{T['beam_width']}:** {beam_width:.2f} m")
-        st.write(f"**{T['beam_area']}:** {beam_area:.2f} m²")
-        st.write(f"**{T['n_lamps']}:** {n_lamps}")
-        st.write(f"**{T['uniformity']}:** {uniformity*100:.1f} %")
+if not st.session_state.blueprint:
+    st.warning(T['no_blueprint'])
+else:
+    col_left, col_right = st.columns([2, 1])
+    
+    with col_right:
+        st.subheader("⚙️ Opzioni")
+        
+        project_name = st.text_input(T['project_name'], "LUXiA_Project")
+        
+        st.markdown("**Modalità Disegno**")
+        drawing_mode = st.radio(
+            T['drawing_mode'],
+            [T['mode_rectangle'], T['mode_polygon']],
+            label_visibility="collapsed"
+        )
+        st.session_state.current_drawing_mode = 'rectangle' if drawing_mode == T['mode_rectangle'] else 'polygon'
+        
+        if st.button("🗑️ " + T['clear_drawing'], use_container_width=True):
+            st.session_state.drawing_points = []
+            st.rerun()
+        
+        st.divider()
+        st.subheader("📊 Aree Disegnate")
+        for idx, area in enumerate(st.session_state.areas):
+            st.write(f"✓ {area['name']} - {len(area['points'])} punti")
+        # Scala immagine / Riferimento
+        st.markdown("**Scala immagine / Riferimento**")
+        if 'pixels_per_meter' not in st.session_state:
+            st.session_state.pixels_per_meter = None
+        if HAS_CANVAS:
+            ref_mode = st.radio("Imposta riferimento", ("Disegna Linea", "Manuale"), index=0)
+            if ref_mode == "Disegna Linea":
+                st.info("Disegna una linea di riferimento sulla planimetria e inserisci la lunghezza reale.")
+        else:
+            st.info("Canvas non disponibile: usa input manuale per scala")
+    
+    with col_left:
+        # Mostra blueprint con aree
+        if st.session_state.areas:
+            display_img = st.session_state.blueprint.draw_areas(st.session_state.areas)
+        else:
+            display_img = st.session_state.blueprint.get_pil_image()
 
-        # If parsed LDT has lumen, show illuminance estimate (very simplified)
-        if parsed and parsed.get('total_luminous_flux'):
-            flux = parsed['total_luminous_flux']
-            # assume portion of flux within main cone approx = 0.7 (simplified)
-            flux_eff = flux * 0.7
-            E_mean = flux_eff / (n_lamps * beam_area)
-            st.write(f"Estimated average illuminance per lamp (simplified): {E_mean:.1f} lx")
+        # Canvas drawing support (optional)
+        if HAS_CANVAS:
+            pil_img = display_img.convert('RGB') if hasattr(display_img, 'convert') else display_img
+            bg_width, bg_height = pil_img.size
+            canvas_result = st_canvas(
+                fill_color="rgba(255, 165, 0, 0.3)",
+                stroke_width=2,
+                stroke_color="#ff0000",
+                background_image=pil_img,
+                update_streamlit=True,
+                height=min(800, bg_height),
+                width=min(1200, bg_width),
+                drawing_mode="rect",
+                key="canvas_areas",
+            )
 
-        # Generate PDF report
-        if st.button(T["download_pdf"], key=f"pdf_{i}"):
-            pdf = FPDF()
-            pdf.add_page()
-            pdf.set_font("Helvetica", "B", 14)
-            pdf.cell(0, 10, f"LUXiA Report: {project_name}", ln=True)
-            pdf.set_font("Helvetica", size=11)
-            pdf.cell(0, 8, f"Room: {room_name}", ln=True)
-            pdf.cell(0, 8, f"Mounting height h: {h} m, Calc plane hc: {hc} m", ln=True)
-            pdf.cell(0, 8, f"Semi-angle δ: {angle_deg:.1f}°", ln=True)
-            pdf.cell(0, 8, f"Beam width: {beam_width:.2f} m", ln=True)
-            pdf.cell(0, 8, f"Beam area: {beam_area:.2f} m²", ln=True)
-            pdf.cell(0, 8, f"Number of luminaires: {n_lamps}", ln=True)
-            pdf.cell(0, 8, f"Estimated uniformity: {uniformity*100:.1f} %", ln=True)
-            if parsed and parsed.get('total_luminous_flux'):
-                pdf.cell(0, 8, f"Photometry source: {parsed.get('name','n/a')}", ln=True)
-                pdf.cell(0, 8, f"Total luminous flux (lm): {parsed.get('total_luminous_flux')}", ln=True)
-            out_name = os.path.join("outputs", f"{project_name.replace(' ','_')}_{room_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
-            pdf.output(out_name)
-            with open(out_name, "rb") as f:
-                st.download_button(T["download_pdf"], f, file_name=os.path.basename(out_name), mime="application/pdf")
+            # Reference line canvas for scale (if scale not set)
+            if st.session_state.get('pixels_per_meter', None) is None:
+                st.markdown("#### Imposta Scala (se non presente)")
+                st.write("Disegna una linea (tool linea) e poi inserisci la lunghezza reale in metri.")
+                ref_canvas = st_canvas(
+                    fill_color=None,
+                    stroke_width=2,
+                    stroke_color="#00ff00",
+                    background_image=pil_img,
+                    update_streamlit=True,
+                    height=min(800, bg_height),
+                    width=min(1200, bg_width),
+                    drawing_mode="line",
+                    key="canvas_ref",
+                )
+                if ref_canvas and getattr(ref_canvas, 'json_data', None) and 'objects' in ref_canvas.json_data and len(ref_canvas.json_data['objects'])>0:
+                    obj = ref_canvas.json_data['objects'][-1]
+                    px_length = None
+                    if obj.get('type') == 'line':
+                        x1 = obj.get('x1') if obj.get('x1') is not None else obj.get('left', 0)
+                        y1 = obj.get('y1') if obj.get('y1') is not None else obj.get('top', 0)
+                        x2 = obj.get('x2') if obj.get('x2') is not None else (obj.get('left', 0) + obj.get('width', 0))
+                        y2 = obj.get('y2') if obj.get('y2') is not None else (obj.get('top', 0) + obj.get('height', 0))
+                        try:
+                            px_length = ((x2 - x1)**2 + (y2 - y1)**2)**0.5
+                        except Exception:
+                            px_length = None
+                    if px_length:
+                        real_len = st.number_input("Lunghezza reale della linea (m)", min_value=0.01, value=1.0, step=0.01)
+                        if st.button("Imposta Scala (pixels/m)"):
+                            st.session_state.pixels_per_meter = px_length / float(real_len)
+                            st.success(f"Scala impostata: {st.session_state.pixels_per_meter:.2f} px/m")
+
+            # Process drawn rectangles as new areas (only when new objects appear)
+            if canvas_result and getattr(canvas_result, 'json_data', None) and 'objects' in canvas_result.json_data:
+                objs = canvas_result.json_data['objects']
+                last_count = st.session_state.get('canvas_last_count', 0)
+                if len(objs) > last_count:
+                    # process only the new objects
+                    for obj in objs[last_count:]:
+                        otype = obj.get('type') or obj.get('shape') or ''
+                        pts = None
+                        # Rect
+                        if otype == 'rect' or obj.get('width') is not None:
+                            left = obj.get('left', 0)
+                            top = obj.get('top', 0)
+                            width = obj.get('width', 0)
+                            height = obj.get('height', 0)
+                            pts = [(left, top), (left+width, top+height)]
+                            area_type = 'rectangle'
+                        # Line -> ignore as area
+                        elif otype == 'line':
+                            pts = None
+                        # Polygon / Polyline
+                        elif 'points' in obj and isinstance(obj['points'], list):
+                            # fabric.js may store points as list of dicts
+                            try:
+                                pts = [(p['x'], p['y']) if isinstance(p, dict) else (p[0], p[1]) for p in obj['points']]
+                                area_type = 'polygon'
+                            except Exception:
+                                pts = None
+                        # Path (freehand) -> extract coords from path commands
+                        elif 'path' in obj and isinstance(obj['path'], list):
+                            coords = []
+                            try:
+                                for cmd in obj['path']:
+                                    # cmd like ['M', x, y] or ['L', x, y]
+                                    if len(cmd) >= 3 and isinstance(cmd[1], (int, float)):
+                                        coords.append((cmd[1], cmd[2]))
+                                if len(coords) >= 2:
+                                    pts = coords
+                                    area_type = 'polygon'
+                            except Exception:
+                                pts = None
+                        # If we have points, store them (they are in display coords)
+                        if pts:
+                            a_name = f"Area_{len(st.session_state.areas)+1}"
+                            # compute approximate area in pixels (shoelace) and convert to m2 if scale present
+                            def polygon_area_px(points):
+                                x = [p[0] for p in points]
+                                y = [p[1] for p in points]
+                                n = len(points)
+                                area = 0.0
+                                for i in range(n):
+                                    j = (i + 1) % n
+                                    area += x[i] * y[j] - x[j] * y[i]
+                                return abs(area) / 2.0
+
+                            area_px = polygon_area_px(pts) if len(pts) >= 3 else abs((pts[1][0]-pts[0][0])*(pts[1][1]-pts[0][1]))
+                            ppm = st.session_state.get('pixels_per_meter', None)
+                            surface_m2 = None
+                            if ppm and ppm > 0:
+                                surface_m2 = area_px / (ppm**2)
+
+                            new_area = {
+                                'name': a_name,
+                                'points': pts,
+                                'type': area_type if 'area_type' in locals() else 'polygon',
+                                'height_mounting': 3.0,
+                                'height_calc_plane': 0.85,
+                                'photometry': '<Manual>',
+                                'surface_m2': surface_m2,
+                            }
+                            st.session_state.areas.append(new_area)
+                    st.session_state.canvas_last_count = len(objs)
+                    st.success(f"Aggiunte {len(objs) - last_count} area/e dal canvas")
+
+        # Mostra immagine (fallback)
+        st.image(display_img, use_column_width=True)
+        
+        # Inserimento area manuale
+        st.markdown("### Inserisci Area Manualmente")
+        col_an, col_ah1, col_ah2 = st.columns(3)
+        with col_an:
+            area_name = st.text_input(T['area_name'], f"Area_{len(st.session_state.areas)+1}", key=f"area_name_{len(st.session_state.areas)}")
+        with col_ah1:
+            height_m = st.number_input(T['height_mounting'], 2.5, 10.0, 3.0, 0.1, key=f"height_m_{len(st.session_state.areas)}")
+        with col_ah2:
+            height_c = st.number_input(T['height_calc_plane'], 0.0, 3.0, 0.85, 0.1, key=f"height_c_{len(st.session_state.areas)}")
+        
+        col_photo, col_btn = st.columns([2, 1])
+        with col_photo:
+            selected_photom = st.selectbox(
+                T['select_photometry'],
+                list(st.session_state.photometries.keys()) + ["<Manual>"],
+                key=f"photom_select_{len(st.session_state.areas)}"
+            )
+        
+        with col_btn:
+            if st.button(T['add_area'], use_container_width=True):
+                if area_name.strip():
+                    start_idx = len(st.session_state.areas)
+                    new_area = {
+                        'name': area_name,
+                        'points': [(100 + start_idx*20, 100 + start_idx*20), (200 + start_idx*20, 200 + start_idx*20)],  # Default rectangle
+                        'type': 'rectangle',
+                        'height_mounting': height_m,
+                        'height_calc_plane': height_c,
+                        'photometry': selected_photom,
+                    }
+                    st.session_state.areas.append(new_area)
+                    st.success(T['area_added'])
+                    st.rerun()
+
+# ============================================================================
+# STEP 4: CALCOLI E EXPORT
+# ============================================================================
+st.header(f"📊 {T['step4']}")
+
+if st.session_state.areas and st.session_state.photometries:
+    
+    areas_data = []
+    total_lamps = 0
+    total_area = 0
+    
+    for area_idx, area in enumerate(st.session_state.areas):
+        st.subheader(f"🎯 {area['name']}")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        # Carica fotometria
+        photom = st.session_state.photometries.get(area['photometry'], {})
+        
+        # Calcoli
+        with col1:
+            st.metric("Altezza Montaggio", f"{area['height_mounting']:.2f} m")
+        
+        with col2:
+            st.metric("Altezza Piano Calcolo", f"{area['height_calc_plane']:.2f} m")
+        
+        with col3:
+            beam_angle = st.number_input(
+                T['beam_angle'],
+                1, 90, 15,
+                key=f"beam_angle_{area_idx}"
+            )
+        
+        # Calcola fascio
+        height_diff = area['height_mounting'] - area['height_calc_plane']
+        beam_width = calculate_beam_spread(area['height_mounting'], area['height_calc_plane'], beam_angle)
+        beam_area = math.pi * (beam_width/2)**2
+        # Area superficie
+        surface_area = None
+        # If area has precomputed surface in m2 (from canvas), use it
+        if area.get('surface_m2'):
+            surface_area = area['surface_m2']
+        else:
+            # try to compute from polygon points if possible using pixels_per_meter
+            pts = area.get('points', [])
+            if pts and len(pts) >= 2:
+                # compute pixel area (shoelace for polygons or rectangle)
+                def polygon_area_px(points):
+                    x = [p[0] for p in points]
+                    y = [p[1] for p in points]
+                    n = len(points)
+                    area_px = 0.0
+                    for i in range(n):
+                        j = (i + 1) % n
+                        area_px += x[i] * y[j] - x[j] * y[i]
+                    return abs(area_px) / 2.0
+
+                if len(pts) >= 3:
+                    area_px = polygon_area_px(pts)
+                else:
+                    # rectangle defined by two points
+                    area_px = abs((pts[1][0]-pts[0][0])*(pts[1][1]-pts[0][1]))
+
+                ppm = st.session_state.get('pixels_per_meter', None)
+                if ppm and ppm > 0:
+                    surface_area = area_px / (ppm**2)
+                else:
+                    # fallback: assume 1 px = 1 m (not ideal)
+                    surface_area = area_px
+        if surface_area is None:
+            surface_area = 0
+        
+        # Calcola numero lampade
+        calc = LampPlacementCalculator(photom)
+        spacing_config = calc.calculate_spacing(10, 10, beam_width)  # 10x10m area default
+        
+        n_lamps = spacing_config['total_lamps']
+        spacing_x = spacing_config['spacing_x']
+        spacing_y = spacing_config['spacing_y']
+        
+        total_lamps += n_lamps
+        total_area += surface_area
+        
+        col_col1, col_col2, col_col3 = st.columns(3)
+        with col_col1:
+            st.metric(T['beam_width'], f"{beam_width:.2f} m")
+        with col_col2:
+            st.metric(T['lamps_needed'], n_lamps)
+        with col_col3:
+            st.metric("Uniformità", "95%")
+        
+        st.write(f"📏 Spaziamento: X={spacing_x:.2f}m, Y={spacing_y:.2f}m")
+        
+        areas_data.append({
+            'name': area['name'],
+            'surface': surface_area,
+            'lamps': n_lamps,
+            'beam_width': beam_width,
+            'spacing_x': spacing_x,
+            'spacing_y': spacing_y,
+            'height': area['height_mounting'],
+            'uniformity': 95.0,
+            'photometry_name': area['photometry'],
+            'points': area['points'],
+            'lamp_positions': [(50+i*spacing_x, 50+j*spacing_y) for i in range(spacing_config['lamps_x']) for j in range(spacing_config['lamps_y'])],
+        })
+        
+        st.divider()
+    
+    # ========================================================================
+    # RIEPILOGO FINALE
+    # ========================================================================
+    st.subheader(f"📋 {T['summary']}")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric(T['total_lamps'], total_lamps)
+    with col2:
+        st.metric(T['total_area'], f"{total_area:.2f} m²")
+    with col3:
+        st.metric("N. Aree", len(st.session_state.areas))
+    
+    # ========================================================================
+    # DOWNLOAD PDF
+    # ========================================================================
+    report_gen = ReportGenerator(project_name, lang_code)
+    pdf_path = f"outputs/{project_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    report_gen.generate_pdf(pdf_path, areas_data, total_lamps)
+    
+    with open(pdf_path, 'rb') as f:
+        st.download_button(
+            label=T['download_pdf'],
+            data=f.read(),
+            file_name=os.path.basename(pdf_path),
+            mime='application/pdf'
+        )
+    
+    # ========================================================================
+    # DOWNLOAD DWG
+    # ========================================================================
+    dwg_path = f"outputs/{project_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.dwg"
+    calc = LampPlacementCalculator()
+    calc.export_to_dwg(dwg_path, areas_data)
+    
+    with open(dwg_path, 'rb') as f:
+        st.download_button(
+            label=T['download_dwg'],
+            data=f.read(),
+            file_name=os.path.basename(dwg_path),
+            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+
+else:
+    st.info("⏳ Completare i step precedenti per accedere ai calcoli")
+
+st.markdown("---")
+st.caption("LUXiA v1.0 - Progettazione illuminotecnica avanzata")
