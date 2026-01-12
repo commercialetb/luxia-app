@@ -6,7 +6,8 @@ import streamlit as st
 try:
     import cv2
     HAS_CV2 = True
-except ImportError:
+except Exception:
+    # Catch broad exceptions (ImportError, OSError due to missing libGL, etc.)
     HAS_CV2 = False
 
 class BlueprintProcessor:
